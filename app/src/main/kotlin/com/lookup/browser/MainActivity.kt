@@ -488,9 +488,16 @@ class MainActivity : AppCompatActivity() {
         }
 
         override fun onPageFinished(view: WebView, url: String) {
-            if (view === webView && imageSearchPending && isEbaySearchPage(url)) {
-                imageSearchPending = false
+            // Only a page with eBay's search header counts: the item page we came from may finish loading after IMAGE
+            // was tapped, and used to use up the request before the search page arrived.
+            if (view === webView && imageSearchPending && (url.contains("ebay.com/sch/") || url.contains("ebay.com/n/"))) {
                 view.postDelayed({ view.evaluateJavascript(EBAY_CAMERA_JS, null) }, 800)
+                // Keep asking until the overlay really exists (a redirect can replace the page after we inject).
+                view.postDelayed({
+                    view.evaluateJavascript("!!document.getElementById('__lb_overlay')") { r ->
+                        if (r == "true") imageSearchPending = false
+                    }
+                }, 4000)
             }
         }
 
