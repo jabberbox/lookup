@@ -175,7 +175,9 @@ class MainActivity : AppCompatActivity() {
     }, 100);
 
     // Trigger eBay's visual-search modal
-    var camBtn = document.querySelector('[aria-label="Search by image"]')
+    var camBtn = document.querySelector('.gh-search-input__camera-btn')
+              || document.querySelector('[aria-label="Camera icon"]')
+              || document.querySelector('[aria-label="Search by image"]')
               || document.querySelector('.gh-search__camera-btn');
     if (camBtn) camBtn.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, view:window}));
 })();
