@@ -627,8 +627,7 @@ class MainActivity : AppCompatActivity() {
         fun line(label: String, page: Listings.Page?) =
             if (page == null) label + " looking..."
             else label + " " + page.items.size + ", typically " + Listings.money(Listings.median(page.items.mapNotNull { it.price }))
-        summary.text = if (blockedNote != null) "Sold: eBay wants a check. Tap here, do it once, then search again.
-" + line("Listed", active)
+        summary.text = if (blockedNote != null) "Sold: eBay wants a check. Tap here, do it once, then search again.\n" + line("Listed", active)
             else if (soldDone && activeDone && sold?.items?.isEmpty() == true && active?.items?.isEmpty() == true) "Nothing found."
             else line("Sold", sold) + "\n" + line("Listed", active)
         if (!rebuildList) return
