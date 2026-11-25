@@ -30,12 +30,12 @@ object Listings {
             url: a.href
         });
     });
-    return JSON.stringify({cards: nodes.length, title: document.title,
+    return JSON.stringify({cards: nodes.length, title: document.title, href: location.href,
         sample: nodes.length ? String(nodes[0].className) : '', items: items});
 })()
 """.trimIndent()
 
-    class Page(val cards: Int, val pageTitle: String, val sample: String, val items: List<Listing>)
+    class Page(val cards: Int, val pageTitle: String, val sample: String, val items: List<Listing>, val href: String = "")
 
     /** evaluateJavascript hands back a JSON-quoted string; unwrap it and parse the inner JSON. */
     fun parse(raw: String?): Page? {
@@ -51,7 +51,7 @@ object Listings {
             val priceText = it.optString("price")
             list.add(Listing(title, firstPrice(priceText), shortPrice(priceText), clean(it.optString("note")), it.optString("url")))
         }
-        return Page(o.optInt("cards"), o.optString("title"), o.optString("sample"), list)
+        return Page(o.optInt("cards"), o.optString("title"), o.optString("sample"), list, o.optString("href"))
     }
 
     private fun clean(s: String) = s

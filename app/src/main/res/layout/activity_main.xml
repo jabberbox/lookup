@@ -1,83 +1,90 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="#000000"
     android:orientation="vertical">
+
+    <!-- Header, as in the stock tools: back chevron on the left, small centred title. -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="48dp">
+
+        <ImageView
+            android:id="@+id/btnBack"
+            android:focusable="false"
+            android:layout_width="56dp"
+            android:layout_height="48dp"
+            android:contentDescription="Back"
+            android:paddingBottom="14dp"
+            android:paddingLeft="19dp"
+            android:paddingRight="19dp"
+            android:paddingTop="14dp"
+            android:src="@drawable/ic_back" />
+
+        <TextView
+            android:id="@+id/title"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:layout_gravity="center_horizontal"
+            android:ellipsize="end"
+            android:gravity="center_vertical"
+            android:maxLines="1"
+            android:maxWidth="260dp"
+            android:text="Lookup"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp" />
+    </FrameLayout>
 
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1">
 
-        <WebView
-            android:id="@+id/webView"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:visibility="gone" />
-
-        <!-- Our own plain results page. Reads eBay through the hidden scraper WebView below. -->
+        <!-- Type what it is. -->
         <LinearLayout
-            android:id="@+id/lookupPane"
+            android:id="@+id/homePane"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:background="#000000"
-            android:orientation="vertical">
+            android:orientation="vertical"
+            android:paddingLeft="31dp"
+            android:paddingRight="31dp">
 
             <EditText
                 android:id="@+id/queryField"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="48dp"
                 android:background="@android:color/transparent"
-                android:fontFamily="sans-serif-light"
+                android:gravity="top|start"
                 android:hint="What is it?"
                 android:imeOptions="actionSearch"
-                android:inputType="text"
-                android:maxLines="1"
-                android:padding="16dp"
+                android:inputType="text|textNoSuggestions"
+                android:maxLines="3"
+                android:padding="0dp"
                 android:textColor="#FFFFFF"
-                android:textColorHint="#777777"
-                android:textSize="20sp" />
+                android:textColorHint="#6E6E6E"
+                android:textSize="28sp" />
+        </LinearLayout>
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:id="@+id/tabSold"
-                    android:layout_width="0dp"
-                    android:layout_height="match_parent"
-                    android:layout_weight="1"
-                    android:fontFamily="sans-serif-light"
-                    android:gravity="center"
-                    android:letterSpacing="0.12"
-                    android:text="SOLD"
-                    android:textColor="#FFFFFF"
-                    android:textSize="13sp" />
-
-                <TextView
-                    android:id="@+id/tabActive"
-                    android:layout_width="0dp"
-                    android:layout_height="match_parent"
-                    android:layout_weight="1"
-                    android:fontFamily="sans-serif-light"
-                    android:gravity="center"
-                    android:letterSpacing="0.12"
-                    android:text="LISTED"
-                    android:textColor="#777777"
-                    android:textSize="13sp" />
-            </LinearLayout>
+        <!-- Sold and listed prices. -->
+        <LinearLayout
+            android:id="@+id/resultsPane"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:visibility="gone">
 
             <TextView
                 android:id="@+id/summary"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:fontFamily="sans-serif-light"
-                android:paddingBottom="8dp"
-                android:paddingLeft="16dp"
-                android:paddingRight="16dp"
-                android:textColor="#BBBBBB"
+                android:lineSpacingExtra="2dp"
+                android:paddingBottom="12dp"
+                android:paddingLeft="31dp"
+                android:paddingRight="31dp"
+                android:paddingTop="8dp"
+                android:textColor="#9A9A9A"
                 android:textSize="15sp" />
 
             <ListView
@@ -85,9 +92,17 @@
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
                 android:layout_weight="1"
-                android:divider="#222222"
-                android:dividerHeight="1dp" />
+                android:divider="@null"
+                android:dividerHeight="0dp"
+                android:overScrollMode="never"
+                android:scrollbars="none" />
         </LinearLayout>
+
+        <WebView
+            android:id="@+id/webView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
 
         <WebView
             android:id="@+id/scraper"
@@ -96,69 +111,60 @@
             android:visibility="invisible" />
     </FrameLayout>
 
-    <!-- Hairline separator between page content and the nav bar -->
-    <View
+    <!-- Bottom row, as in the stock editors: an action in each corner. -->
+    <FrameLayout
+        android:id="@+id/bottomBar"
         android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="#333333" />
+        android:layout_height="64dp">
 
-    <!-- Bottom nav bar: [←] | [EBAY] | [IMAGE] -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:background="#000000"
-        android:orientation="horizontal">
+        <ImageView
+            android:id="@+id/btnLeft"
+            android:focusable="false"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:layout_gravity="start"
+            android:contentDescription="Photo"
+            android:paddingLeft="31dp"
+            android:paddingRight="24dp"
+            android:src="@drawable/ic_camera" />
 
         <TextView
-            android:id="@+id/btnBack"
-            android:layout_width="0dp"
+            android:id="@+id/labelLeft"
+            android:focusable="false"
+            android:layout_width="wrap_content"
             android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:text="←"
+            android:layout_gravity="start"
+            android:gravity="center_vertical"
+            android:paddingLeft="31dp"
+            android:paddingRight="24dp"
+            android:text="SOLD"
             android:textColor="#FFFFFF"
-            android:textSize="22sp"
-            android:fontFamily="sans-serif-light"
-            android:clickable="true"
-            android:focusable="true" />
+            android:textSize="16sp"
+            android:visibility="gone" />
 
-        <View
-            android:layout_width="1dp"
+        <ImageView
+            android:id="@+id/btnRight"
+            android:focusable="false"
+            android:layout_width="wrap_content"
             android:layout_height="match_parent"
-            android:background="#333333" />
+            android:layout_gravity="end"
+            android:contentDescription="Search"
+            android:paddingLeft="24dp"
+            android:paddingRight="31dp"
+            android:src="@drawable/ic_search" />
 
         <TextView
-            android:id="@+id/btnEbay"
-            android:layout_width="0dp"
+            android:id="@+id/labelRight"
+            android:focusable="false"
+            android:layout_width="wrap_content"
             android:layout_height="match_parent"
-            android:layout_weight="2"
-            android:gravity="center"
-            android:text="LOOKUP"
-            android:textColor="#FFFFFF"
-            android:textSize="13sp"
-            android:letterSpacing="0.12"
-            android:fontFamily="sans-serif-light"
-            android:clickable="true"
-            android:focusable="true" />
-
-        <View
-            android:layout_width="1dp"
-            android:layout_height="match_parent"
-            android:background="#333333" />
-
-        <TextView
-            android:id="@+id/btnImage"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="2"
-            android:gravity="center"
-            android:text="IMAGE"
-            android:textColor="#FFFFFF"
-            android:textSize="13sp"
-            android:letterSpacing="0.12"
-            android:fontFamily="sans-serif-light"
-            android:clickable="true"
-            android:focusable="true" />
-
-    </LinearLayout>
+            android:layout_gravity="end"
+            android:gravity="center_vertical"
+            android:paddingLeft="24dp"
+            android:paddingRight="31dp"
+            android:text="LISTED"
+            android:textColor="#6E6E6E"
+            android:textSize="16sp"
+            android:visibility="gone" />
+    </FrameLayout>
 </LinearLayout>

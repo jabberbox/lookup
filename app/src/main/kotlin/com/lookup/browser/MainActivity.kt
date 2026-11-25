@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -34,12 +35,23 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var scraper: WebView
-    private lateinit var lookupPane: View
+    private lateinit var homePane: View
+    private lateinit var resultsPane: View
+    private lateinit var bottomBar: View
+    private lateinit var titleView: TextView
     private lateinit var queryField: EditText
     private lateinit var summary: TextView
-    private lateinit var tabSold: TextView
-    private lateinit var tabActive: TextView
+    private lateinit var btnLeft: View
+    private lateinit var btnRight: View
+    private lateinit var labelLeft: TextView
+    private lateinit var labelRight: TextView
     private lateinit var resultList: ListView
+    private var resultsTitle = "Lookup"
+
+    // Photo search: true from the IMAGE tap until we leave the eBay page; the results page is turned into our own
+    // page by itself once a photo has been handed to eBay.
+    private var imageFlow = false
+    private var imageResultsExpected = false
 
     // Lookup's own results page: what a thing sold for and what it is listed for, nothing else.
     private var searchBase: String? = null
@@ -65,6 +77,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         } else null
+        if (imageFlow && uris != null) imageResultsExpected = true
         fileChooserCallback?.onReceiveValue(uris)
         fileChooserCallback = null
     }
@@ -193,109 +206,134 @@ class MainActivity : AppCompatActivity() {
 
         webView = findViewById(R.id.webView)
         scraper = findViewById(R.id.scraper)
-        lookupPane = findViewById(R.id.lookupPane)
+        homePane = findViewById(R.id.homePane)
+        resultsPane = findViewById(R.id.resultsPane)
+        bottomBar = findViewById(R.id.bottomBar)
+        titleView = findViewById(R.id.title)
         queryField = findViewById(R.id.queryField)
         summary = findViewById(R.id.summary)
-        tabSold = findViewById(R.id.tabSold)
-        tabActive = findViewById(R.id.tabActive)
+        btnLeft = findViewById(R.id.btnLeft)
+        btnRight = findViewById(R.id.btnRight)
+        labelLeft = findViewById(R.id.labelLeft)
+        labelRight = findViewById(R.id.labelRight)
         resultList = findViewById(R.id.resultList)
         setupWebView(webView, AllowlistClient())
         setupWebView(scraper, ScraperClient())
         setupLookup()
+        listOf(titleView, queryField, summary, labelLeft, labelRight).forEach { it.typeface = akkurat() }
 
-        // On-screen back button — navigate within page history, do nothing at root
-        findViewById<TextView>(R.id.btnBack).setOnClickListener { goBackOrHome() }
-
-        // LOOKUP: on the web page, turn an eBay results page (for instance after a photo search) into our own
-        // page; otherwise just show our page.
-        findViewById<TextView>(R.id.btnEbay).setOnClickListener {
-            val url = webView.url ?: ""
-            if (webView.visibility == View.VISIBLE && url.contains("ebay.com/sch/")) {
-                queryField.setText("")
-                queryField.hint = "from photo"
-                startSearch(url)
-            } else {
-                showLookup()
-            }
-        }
-        findViewById<TextView>(R.id.btnImage).setOnClickListener {
-            showWeb()
-            val currentUrl = webView.url ?: ""
-            if (currentUrl.contains("ebay.com/sch/", ignoreCase = true)) {
-                // Already on an eBay search page (the camera button lives in its header; an item page has none) — inject directly, no navigation needed.
-                // Avoids the Cloudflare-challenge redirect clearing imageSearchPending early.
-                imageSearchPending = false
-                webView.evaluateJavascript(EBAY_CAMERA_JS, null)
-            } else {
-                imageSearchPending = true
-                load(URL_EBAY)
-            }
-        }
-
-        // Hardware back key: mirror the on-screen button behaviour
+        findViewById<View>(R.id.btnBack).setOnClickListener { goBack() }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                goBackOrHome()
-                // On our own page: swallow the event, do NOT exit the app
-            }
+            override fun handleOnBackPressed() = goBack()
         })
 
-        if (savedInstanceState != null) {
-            // Restore scroll position and URL after a process kill/recreate
-            webView.restoreState(savedInstanceState)
-        } else {
-            showLookup()
+        setMode(Mode.HOME)
+    }
+
+    // -- Screens ----------------------------------------------------------------
+
+    private enum class Mode { HOME, RESULTS, WEB }
+
+    private var mode = Mode.HOME
+
+    /** Akkurat is a system font on the Light Phone III; anywhere else this falls back to the default sans serif. */
+    private fun akkurat(): Typeface {
+        val f = java.io.File("/system/fonts/AkkuratLLTT-Regular.ttf")
+        return if (f.exists()) runCatching { Typeface.createFromFile(f) }.getOrDefault(Typeface.SANS_SERIF) else Typeface.SANS_SERIF
+    }
+
+    private fun setMode(m: Mode) {
+        mode = m
+        homePane.visibility = if (m == Mode.HOME) View.VISIBLE else View.GONE
+        resultsPane.visibility = if (m == Mode.RESULTS) View.VISIBLE else View.GONE
+        webView.visibility = if (m == Mode.WEB) View.VISIBLE else View.GONE
+        bottomBar.visibility = if (m == Mode.WEB) View.GONE else View.VISIBLE
+        val home = m == Mode.HOME
+        btnLeft.visibility = if (home) View.VISIBLE else View.GONE
+        btnRight.visibility = if (home) View.VISIBLE else View.GONE
+        labelLeft.visibility = if (home) View.GONE else View.VISIBLE
+        labelRight.visibility = if (home) View.GONE else View.VISIBLE
+        titleView.text = when (m) {
+            Mode.HOME -> "Lookup"
+            Mode.RESULTS -> resultsTitle
+            Mode.WEB -> "eBay"
         }
+        if (m != Mode.HOME) hideKeyboard()
+        if (m == Mode.RESULTS) paintTabs()
     }
 
-    // -- Lookup page ----------------------------------------------------------
-
-    private fun goBackOrHome() {
-        if (webView.visibility != View.VISIBLE) return
-        if (webView.canGoBack()) webView.goBack() else showLookup()
-    }
-
-    private fun showLookup() {
-        webView.visibility = View.GONE
-        lookupPane.visibility = View.VISIBLE
-    }
-
-    private fun showWeb() {
-        lookupPane.visibility = View.GONE
-        webView.visibility = View.VISIBLE
-        hideKeyboard()
+    private fun goBack() {
+        when (mode) {
+            Mode.HOME -> finish()
+            Mode.RESULTS -> setMode(Mode.HOME)
+            Mode.WEB -> {
+                if (webView.canGoBack() && !imageFlow) webView.goBack()
+                else {
+                    imageFlow = false
+                    imageResultsExpected = false
+                    setMode(if (soldPage != null) Mode.RESULTS else Mode.HOME)
+                }
+            }
+        }
     }
 
     private fun hideKeyboard() {
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(queryField.windowToken, 0)
     }
 
+    private fun submitQuery() {
+        val q = queryField.text.toString().trim()
+        if (q.isEmpty()) return
+        resultsTitle = q
+        startSearch("https://www.ebay.com/sch/i.html?_nkw=" + Uri.encode(q))
+    }
+
+    private fun startImageSearch() {
+        imageFlow = true
+        imageResultsExpected = false
+        setMode(Mode.WEB)
+        val currentUrl = webView.url ?: ""
+        if (currentUrl.contains("ebay.com/sch/", ignoreCase = true)) {
+            // Already on an eBay search page (the camera button lives in its header; an item page has none).
+            imageSearchPending = false
+            webView.evaluateJavascript(EBAY_CAMERA_JS, null)
+        } else {
+            imageSearchPending = true
+            load(URL_EBAY)
+        }
+    }
+
     private fun setupLookup() {
         queryField.setOnEditorActionListener { _, action, event ->
             if (action == EditorInfo.IME_ACTION_SEARCH ||
                 (event != null && event.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)) {
-                val q = queryField.text.toString().trim()
-                if (q.isNotEmpty()) {
-                    queryField.hint = "What is it?"
-                    startSearch("https://www.ebay.com/sch/i.html?_nkw=" + Uri.encode(q))
-                }
+                submitQuery()
                 true
             } else false
         }
-        tabSold.setOnClickListener { showSold = true; render() }
-        tabActive.setOnClickListener { showSold = false; render() }
+        btnLeft.setOnClickListener { startImageSearch() }
+        btnRight.setOnClickListener { submitQuery() }
+        labelLeft.setOnClickListener { showSold = true; paintTabs(); render() }
+        labelRight.setOnClickListener { showSold = false; paintTabs(); render() }
         summary.setOnClickListener {
             if (blockedNote != null) {
                 // eBay wants a check: show the real page so it can be done once, the cookie is shared.
-                showWeb()
+                imageFlow = false
+                setMode(Mode.WEB)
                 webView.loadUrl(variant(searchBase ?: URL_EBAY, sold = true))
             }
         }
         resultList.setOnItemClickListener { _, _, position, _ ->
             val item = resultList.adapter?.getItem(position) as? Listing ?: return@setOnItemClickListener
-            showWeb()
+            imageFlow = false
+            setMode(Mode.WEB)
             webView.loadUrl(item.url)
         }
+    }
+
+    private fun paintTabs() {
+        labelLeft.setTextColor(if (showSold) 0xFFFFFFFF.toInt() else 0xFF6E6E6E.toInt())
+        labelRight.setTextColor(if (showSold) 0xFF6E6E6E.toInt() else 0xFFFFFFFF.toInt())
     }
 
     /** Same search, sold or still listed. Keeps every other filter (photo match, category) from [base]. */
@@ -312,8 +350,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startSearch(base: String) {
-        hideKeyboard()
-        showLookup()
         searchBase = base
         searchId++
         soldPage = null
@@ -322,6 +358,7 @@ class MainActivity : AppCompatActivity() {
         showSold = true
         summary.text = "Looking..."
         resultList.adapter = null
+        setMode(Mode.RESULTS)
         scraper.loadUrl(variant(base, sold = true))
     }
 
@@ -339,6 +376,9 @@ class MainActivity : AppCompatActivity() {
     private fun onExtracted(id: Int, page: Listings.Page?) {
         if (id != searchId || activePage != null) return
         val soldStep = soldPage == null
+        // A late finish event from the previous page can fire while the next one is loading; only accept the page
+        // that belongs to this step (the sold search carries LH_Sold=1, the listed one does not).
+        if (page != null && page.href.isNotEmpty() && page.href.contains("LH_Sold=1") != soldStep) return
         // Counts and class names only, never titles or prices, so nothing personal reaches the log.
         android.util.Log.i("LookupScrape", "step=" + (if (soldStep) "sold" else "active") + " cards=" + page?.cards +
             " items=" + page?.items?.size + " sample='" + page?.sample + "' title='" + page?.pageTitle + "'")
@@ -357,11 +397,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun light() = android.graphics.Typeface.create("sans-serif-light", android.graphics.Typeface.NORMAL)
-
     private fun render() {
-        tabSold.setTextColor(if (showSold) 0xFFFFFFFF.toInt() else 0xFF777777.toInt())
-        tabActive.setTextColor(if (showSold) 0xFF777777.toInt() else 0xFFFFFFFF.toInt())
         val sold = soldPage ?: return
         val active = activePage
         val medSold = Listings.median(sold.items.mapNotNull { it.price })
@@ -370,14 +406,17 @@ class MainActivity : AppCompatActivity() {
             ?: if (sold.items.isEmpty() && (active?.items?.isEmpty() != false)) "Nothing found."
             else "Sold " + sold.items.size + ", typically " + Listings.money(medSold) + "\nListed " + (active?.items?.size ?: 0) + ", typically " + Listings.money(medActive)
         val items = if (showSold) sold.items else (active?.items ?: emptyList())
+        val font = akkurat()
+        val pad = (31 * resources.displayMetrics.density).toInt()
+        val vpad = (14 * resources.displayMetrics.density).toInt()
         resultList.adapter = object : ArrayAdapter<Listing>(this, 0, items) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val row = (convertView as? android.widget.LinearLayout) ?: android.widget.LinearLayout(context).apply {
                     orientation = android.widget.LinearLayout.VERTICAL
-                    setPadding(48, 24, 48, 24)
-                    addView(TextView(context).apply { textSize = 20f; setTextColor(0xFFFFFFFF.toInt()); typeface = light() })
-                    addView(TextView(context).apply { textSize = 15f; setTextColor(0xFFBBBBBB.toInt()); maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END; typeface = light() })
-                    addView(TextView(context).apply { textSize = 13f; setTextColor(0xFF777777.toInt()); maxLines = 1; typeface = light() })
+                    setPadding(pad, vpad, pad, vpad)
+                    addView(TextView(context).apply { textSize = 24f; setTextColor(0xFFFFFFFF.toInt()); typeface = font })
+                    addView(TextView(context).apply { textSize = 16f; setTextColor(0xFFFFFFFF.toInt()); maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END; typeface = font })
+                    addView(TextView(context).apply { textSize = 14f; setTextColor(0xFF6E6E6E.toInt()); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; typeface = font })
                 }
                 val item = getItem(position)!!
                 (row.getChildAt(0) as TextView).text = item.priceText
@@ -490,6 +529,15 @@ class MainActivity : AppCompatActivity() {
         override fun onPageFinished(view: WebView, url: String) {
             // Only a page with eBay's search header counts: the item page we came from may finish loading after IMAGE
             // was tapped, and used to use up the request before the search page arrived.
+            // A photo was handed to eBay and its matches have loaded: read them into our own page.
+            if (view === webView && imageResultsExpected && url.contains("ebay.com/sch/")) {
+                imageResultsExpected = false
+                imageFlow = false
+                imageSearchPending = false
+                resultsTitle = "Photo"
+                startSearch(url)
+                return
+            }
             if (view === webView && imageSearchPending && (url.contains("ebay.com/sch/") || url.contains("ebay.com/n/"))) {
                 view.postDelayed({ view.evaluateJavascript(EBAY_CAMERA_JS, null) }, 800)
                 // Keep asking until the overlay really exists (a redirect can replace the page after we inject).
