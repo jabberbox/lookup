@@ -65,6 +65,18 @@
                 android:textColor="#FFFFFF"
                 android:textColorHint="#6E6E6E"
                 android:textSize="28sp" />
+
+            <!-- Earlier searches, newest first; typing narrows them. -->
+            <ListView
+                android:id="@+id/historyList"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_marginTop="24dp"
+                android:layout_weight="1"
+                android:divider="@null"
+                android:dividerHeight="0dp"
+                android:overScrollMode="never"
+                android:scrollbars="none" />
         </LinearLayout>
 
         <!-- Sold and listed prices. -->

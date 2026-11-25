@@ -46,6 +46,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var labelLeft: TextView
     private lateinit var labelRight: TextView
     private lateinit var resultList: ListView
+    private lateinit var historyList: ListView
     private var resultsTitle = "Lookup"
 
     // One listing's pictures. The item page is read in the hidden scraper; only its picture addresses are used.
@@ -234,6 +235,7 @@ class MainActivity : AppCompatActivity() {
         labelLeft = findViewById(R.id.labelLeft)
         labelRight = findViewById(R.id.labelRight)
         resultList = findViewById(R.id.resultList)
+        historyList = findViewById(R.id.historyList)
         setupWebView(webView, AllowlistClient())
         setupWebView(scraper, ScraperClient())
         setupLookup()
@@ -286,6 +288,7 @@ class MainActivity : AppCompatActivity() {
             Mode.DETAIL -> if (detailImages.size > 1) "" + (detailIndex + 1) + " of " + detailImages.size else "Listing"
             Mode.WEB -> "eBay"
         }
+        if (m == Mode.HOME) refreshHistory()
         if (m != Mode.HOME) hideKeyboard()
         if (m == Mode.RESULTS) paintTabs()
     }
@@ -293,7 +296,11 @@ class MainActivity : AppCompatActivity() {
     private fun goBack() {
         when (mode) {
             Mode.HOME -> finish()
-            Mode.RESULTS -> setMode(Mode.HOME)
+            Mode.RESULTS -> {
+                // A fresh page: the earlier searches are one tap away below the field.
+                queryField.setText("")
+                setMode(Mode.HOME)
+            }
             Mode.DETAIL -> {
                 detailId++
                 setMode(Mode.RESULTS)
@@ -317,6 +324,7 @@ class MainActivity : AppCompatActivity() {
         val q = queryField.text.toString().trim()
         if (q.isEmpty()) return
         resultsTitle = q
+        rememberSearch(q)
         startSearch("https://www.ebay.com/sch/i.html?_nkw=" + Uri.encode(q))
     }
 
@@ -342,6 +350,22 @@ class MainActivity : AppCompatActivity() {
                 submitQuery()
                 true
             } else false
+        }
+        queryField.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) = refreshHistory()
+        })
+        historyList.setOnItemClickListener { _, _, position, _ ->
+            val q = historyList.adapter?.getItem(position) as? String ?: return@setOnItemClickListener
+            queryField.setText(q)
+            queryField.setSelection(q.length)
+            submitQuery()
+        }
+        historyList.setOnItemLongClickListener { _, _, position, _ ->
+            val q = historyList.adapter?.getItem(position) as? String ?: return@setOnItemLongClickListener true
+            forgetSearch(q)
+            true
         }
         btnLeft.setOnClickListener { startImageSearch() }
         btnRight.setOnClickListener { submitQuery() }
@@ -372,6 +396,55 @@ class MainActivity : AppCompatActivity() {
             val item = resultList.adapter?.getItem(position) as? Listing ?: return@setOnItemClickListener
             imageFlow = false
             openDetail(item)
+        }
+    }
+
+    // -- Search history ----------------------------------------------------------
+    // Text searches only, kept on the phone (app-private preferences), newest first. Hold a row to forget it.
+
+    private val historyPrefs by lazy { getSharedPreferences("lookup_history", MODE_PRIVATE) }
+
+    private fun loadHistory(): List<String> {
+        val raw = historyPrefs.getString("searches", null) ?: return emptyList()
+        return runCatching {
+            val a = org.json.JSONArray(raw)
+            (0 until a.length()).map { a.getString(it) }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun saveHistory(list: List<String>) {
+        historyPrefs.edit().putString("searches", org.json.JSONArray(list).toString()).apply()
+    }
+
+    private fun rememberSearch(q: String) {
+        val list = loadHistory().filterNot { it.equals(q, ignoreCase = true) }
+        saveHistory((listOf(q) + list).take(30))
+    }
+
+    private fun forgetSearch(q: String) {
+        saveHistory(loadHistory().filterNot { it == q })
+        refreshHistory()
+    }
+
+    private fun refreshHistory() {
+        val typed = queryField.text.toString().trim()
+        val all = loadHistory()
+        val shown = if (typed.isEmpty()) all else all.filter { it.contains(typed, ignoreCase = true) && !it.equals(typed, ignoreCase = true) }
+        val font = akkurat()
+        val vpad = (12 * resources.displayMetrics.density).toInt()
+        historyList.adapter = object : ArrayAdapter<String>(this, 0, shown) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val row = (convertView as? TextView) ?: TextView(context).apply {
+                    textSize = 20f
+                    setTextColor(0xFFBDBDBD.toInt())
+                    typeface = font
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    setPadding(0, vpad, 0, vpad)
+                }
+                row.text = getItem(position)
+                return row
+            }
         }
     }
 
