@@ -60,11 +60,23 @@ class MainActivity : AppCompatActivity() {
     // data:, about:, and blob: URIs are always allowed (inline/page-internal).
     // Everything else — including google, social, and analytics domains — is blocked.
     // ──────────────────────────────────────────────────────────────────────────
+    // The Chrome major version the WebView announces itself as.
+    //
+    // The LP3's system WebView is Chrome 113 (May 2023) and can not be updated, and eBay's edge network now
+    // answers "Sorry, something went wrong on our end" to a browser that old. The engine is still Chrome 113; only
+    // the label changes, in Chrome's own reduced user-agent form ("Chrome/<major>.0.0.0"). Raise this to the
+    // current stable Chrome (https://versionhistory.googleapis.com/v1/chrome/platforms/android/channels/stable/versions)
+    // if the error page comes back. 159 was current in November 2026.
+    private val SPOOFED_CHROME_MAJOR = 159
+
     private val ALLOWED_DOMAINS = setOf(
         "ebay.com",
         "ebaystatic.com",
         "ebayimg.com",
         "cloudflare.com",
+        // eBay's "please verify yourself" check is an hCaptcha widget. Without this domain the check page loads
+        // but its widget never appears, so the search can not be reached. Only the captcha service is allowed.
+        "hcaptcha.com",
     )
 
     // ── Bookmark URLs ─────────────────────────────────────────────────────────
@@ -234,6 +246,7 @@ class MainActivity : AppCompatActivity() {
             userAgentString = userAgentString
                 .replace("Version/4.0 ", "")
                 .replace("; wv", "")
+                .replace(Regex("""Chrome/\d+(\.\d+){3}"""), "Chrome/$SPOOFED_CHROME_MAJOR.0.0.0")
         }
 
         webView.setBackgroundColor(Color.BLACK)  // no white flash before page paints
@@ -287,7 +300,11 @@ class MainActivity : AppCompatActivity() {
          */
         override fun shouldOverrideUrlLoading(
             view: WebView, request: WebResourceRequest,
-        ): Boolean = !isAllowed(request.url.toString())
+        ): Boolean {
+            val allowed = isAllowed(request.url.toString())
+            if (!allowed) android.util.Log.i("LookupBlocked", "navigation blocked: ${request.url.host}")
+            return !allowed
+        }
 
         override fun onPageFinished(view: WebView, url: String) {
             if (imageSearchPending && isEbaySearchPage(url)) {
@@ -312,7 +329,10 @@ class MainActivity : AppCompatActivity() {
             view: WebView, request: WebResourceRequest,
         ): WebResourceResponse? {
             val url = request.url.toString()
-            return if (isAllowed(url)) null else emptyResponse()
+            if (isAllowed(url)) return null
+            // Host only, never the path or query, so nothing personal is logged. Lets us see what a page needed.
+            android.util.Log.i("LookupBlocked", "blocked: ${request.url.host}")
+            return emptyResponse()
         }
     }
 
