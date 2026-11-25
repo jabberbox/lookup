@@ -219,8 +219,8 @@ class MainActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.btnImage).setOnClickListener {
             showWeb()
             val currentUrl = webView.url ?: ""
-            if (currentUrl.contains("ebay.com", ignoreCase = true)) {
-                // Already on eBay — inject directly, no navigation needed.
+            if (currentUrl.contains("ebay.com/sch/", ignoreCase = true)) {
+                // Already on an eBay search page (the camera button lives in its header; an item page has none) — inject directly, no navigation needed.
                 // Avoids the Cloudflare-challenge redirect clearing imageSearchPending early.
                 imageSearchPending = false
                 webView.evaluateJavascript(EBAY_CAMERA_JS, null)
