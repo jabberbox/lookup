@@ -175,6 +175,12 @@
             android:layout_width="1dp"
             android:layout_height="1dp"
             android:visibility="invisible" />
+
+        <WebView
+            android:id="@+id/scraperActive"
+            android:layout_width="1dp"
+            android:layout_height="1dp"
+            android:visibility="invisible" />
     </FrameLayout>
 
     <!-- Bottom row, as in the stock editors: an action in each corner. -->

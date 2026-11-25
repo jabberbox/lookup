@@ -34,7 +34,8 @@ import java.io.ByteArrayInputStream
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
-    private lateinit var scraper: WebView
+    private lateinit var scraper: WebView          // sold search; also reads one listing's page
+    private lateinit var scraperActive: WebView    // listed search, loaded at the same time
     private lateinit var homePane: View
     private lateinit var resultsPane: View
     private lateinit var bottomBar: View
@@ -219,6 +220,7 @@ class MainActivity : AppCompatActivity() {
 
         webView = findViewById(R.id.webView)
         scraper = findViewById(R.id.scraper)
+        scraperActive = findViewById(R.id.scraperActive)
         homePane = findViewById(R.id.homePane)
         detailPane = findViewById(R.id.detailPane)
         detailImage = findViewById(R.id.detailImage)
@@ -237,7 +239,8 @@ class MainActivity : AppCompatActivity() {
         resultList = findViewById(R.id.resultList)
         historyList = findViewById(R.id.historyList)
         setupWebView(webView, AllowlistClient())
-        setupWebView(scraper, ScraperClient())
+        setupWebView(scraper, SideClient(sold = true))
+        setupWebView(scraperActive, SideClient(sold = false))
         setupLookup()
         listOf(titleView, queryField, summary, labelLeft, labelRight, detailPrice, detailTitle, detailCondition).forEach { it.typeface = akkurat() }
 
@@ -475,9 +478,16 @@ class MainActivity : AppCompatActivity() {
         showSold = true
         summary.text = "Looking..."
         resultList.adapter = null
+        soldDone = false
+        activeDone = false
         setMode(Mode.RESULTS)
+        // Both searches load at once.
         scraper.loadUrl(variant(base, sold = true))
+        scraperActive.loadUrl(variant(base, sold = false))
     }
+
+    private var soldDone = false
+    private var activeDone = false
 
     // -- One listing ------------------------------------------------------------
 
@@ -550,9 +560,11 @@ class MainActivity : AppCompatActivity() {
         showImage()
     }
 
-    private inner class ScraperClient : AllowlistClient() {
+    /** One of the two hidden search pages. The sold one also reads a listing's page when a listing is open. */
+    private inner class SideClient(private val sold: Boolean) : AllowlistClient() {
         override fun onPageFinished(view: WebView, url: String) {
             if (mode == Mode.DETAIL) {
+                if (!sold) return
                 val did = detailId
                 // The gallery fills in after load; try twice, the first read may come too early.
                 for (delay in longArrayOf(1500, 3500)) view.postDelayed({
@@ -560,48 +572,67 @@ class MainActivity : AppCompatActivity() {
                 }, delay)
                 return
             }
+            // eBay sometimes answers with its "please verify" page instead of results. Say so instead of waiting forever.
+            if (url.contains("/splashui/") || url.contains("captcha", ignoreCase = true)) {
+                val id = searchId
+                blockedNote = "eBay wants a check. Tap here, do it once, then search again."
+                onExtracted(id, sold, null)
+                return
+            }
+            if (url.contains("LH_Sold=1") != sold) return  // a redirect or the previous page, not ours
             val id = searchId
-            // eBay fills the list in after the page loads; give it a moment, then read the cards.
+            // eBay fills the list in after the page loads: look every 250 ms and take the cards as soon as they are there.
+            poll(view, id, 0)
+        }
+
+        private fun poll(view: WebView, id: Int, attempt: Int) {
             view.postDelayed({
-                if (id != searchId) return@postDelayed
-                view.evaluateJavascript(Listings.EXTRACT_JS) { raw -> onExtracted(id, Listings.parse(raw)) }
-            }, 1500)
+                if (id != searchId || (if (sold) soldDone else activeDone)) return@postDelayed
+                view.evaluateJavascript(Listings.EXTRACT_JS) { raw ->
+                    if (id != searchId || (if (sold) soldDone else activeDone)) return@evaluateJavascript
+                    val page = Listings.parse(raw)
+                    val ready = page != null && page.items.isNotEmpty() && (page.href.isEmpty() || page.href.contains("LH_Sold=1") == sold)
+                    when {
+                        ready -> onExtracted(id, sold, page)
+                        attempt >= 24 -> onExtracted(id, sold, page)  // six seconds: nothing found, say so
+                        else -> poll(view, id, attempt + 1)
+                    }
+                }
+            }, if (attempt == 0) 400L else 250L)
         }
     }
 
-    private fun onExtracted(id: Int, page: Listings.Page?) {
-        if (id != searchId || activePage != null) return
-        val soldStep = soldPage == null
-        // A late finish event from the previous page can fire while the next one is loading; only accept the page
-        // that belongs to this step (the sold search carries LH_Sold=1, the listed one does not).
-        if (page != null && page.href.isNotEmpty() && page.href.contains("LH_Sold=1") != soldStep) return
+    private fun onExtracted(id: Int, sold: Boolean, page: Listings.Page?) {
+        if (id != searchId) return
+        if (sold) soldDone = true else activeDone = true
         // Counts and class names only, never titles or prices, so nothing personal reaches the log.
-        android.util.Log.i("LookupScrape", "step=" + (if (soldStep) "sold" else "active") + " cards=" + page?.cards +
+        android.util.Log.i("LookupScrape", "step=" + (if (sold) "sold" else "active") + " cards=" + page?.cards +
             " items=" + page?.items?.size + " sample='" + page?.sample + "' title='" + page?.pageTitle + "'")
         val result = page ?: Listings.Page(0, "", "", emptyList())
         if (result.items.isEmpty() && result.cards == 0) {
             val t = result.pageTitle.lowercase()
-            blockedNote = if (t.contains("verify") || t.contains("security") || t.contains("robot") || t.contains("challenge") || t.contains("sorry"))
-                "eBay wants a check. Tap here, do it once, then search again." else null
+            if (t.contains("verify") || t.contains("security") || t.contains("robot") || t.contains("challenge") || t.contains("sorry"))
+                blockedNote = "eBay wants a check. Tap here, do it once, then search again."
         }
-        if (soldStep) {
-            soldPage = result
-            scraper.loadUrl(variant(searchBase ?: return, sold = false))
-        } else {
-            activePage = result
-            render()
-        }
+        if (sold) soldPage = result else activePage = result
+        // Sold results show as soon as they are in; the listed ones fill in beside them without moving the list
+        // you are looking at.
+        render(rebuildList = (sold == showSold) || !(if (showSold) soldDone else activeDone))
     }
 
-    private fun render() {
-        val sold = soldPage ?: return
+    private fun render(rebuildList: Boolean = true) {
+        val sold = soldPage
         val active = activePage
-        val medSold = Listings.median(sold.items.mapNotNull { it.price })
-        val medActive = Listings.median(active?.items?.mapNotNull { it.price } ?: emptyList())
-        summary.text = blockedNote
-            ?: if (sold.items.isEmpty() && (active?.items?.isEmpty() != false)) "Nothing found."
-            else "Sold " + sold.items.size + ", typically " + Listings.money(medSold) + "\nListed " + (active?.items?.size ?: 0) + ", typically " + Listings.money(medActive)
-        val items = if (showSold) sold.items else (active?.items ?: emptyList())
+        if (sold == null && active == null) return
+        fun line(label: String, page: Listings.Page?) =
+            if (page == null) label + " looking..."
+            else label + " " + page.items.size + ", typically " + Listings.money(Listings.median(page.items.mapNotNull { it.price }))
+        summary.text = if (blockedNote != null) "Sold: eBay wants a check. Tap here, do it once, then search again.
+" + line("Listed", active)
+            else if (soldDone && activeDone && sold?.items?.isEmpty() == true && active?.items?.isEmpty() == true) "Nothing found."
+            else line("Sold", sold) + "\n" + line("Listed", active)
+        if (!rebuildList) return
+        val items = (if (showSold) sold else active)?.items ?: emptyList()
         val font = akkurat()
         val pad = (31 * resources.displayMetrics.density).toInt()
         val vpad = (14 * resources.displayMetrics.density).toInt()
