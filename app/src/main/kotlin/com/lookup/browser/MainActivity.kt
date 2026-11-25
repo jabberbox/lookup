@@ -15,6 +15,14 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.view.KeyEvent
+import android.view.View
+import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.widget.ArrayAdapter
+import android.widget.EditText
+import android.widget.ListView
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -25,6 +33,21 @@ import java.io.ByteArrayInputStream
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
+    private lateinit var scraper: WebView
+    private lateinit var lookupPane: View
+    private lateinit var queryField: EditText
+    private lateinit var summary: TextView
+    private lateinit var tabSold: TextView
+    private lateinit var tabActive: TextView
+    private lateinit var resultList: ListView
+
+    // Lookup's own results page: what a thing sold for and what it is listed for, nothing else.
+    private var searchBase: String? = null
+    private var searchId = 0
+    private var soldPage: Listings.Page? = null
+    private var activePage: Listings.Page? = null
+    private var showSold = true
+    private var blockedNote: String? = null
 
     // Holds the pending callback from WebView while the system file picker is open
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
@@ -167,18 +190,34 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         webView = findViewById(R.id.webView)
-        setupWebView()
+        scraper = findViewById(R.id.scraper)
+        lookupPane = findViewById(R.id.lookupPane)
+        queryField = findViewById(R.id.queryField)
+        summary = findViewById(R.id.summary)
+        tabSold = findViewById(R.id.tabSold)
+        tabActive = findViewById(R.id.tabActive)
+        resultList = findViewById(R.id.resultList)
+        setupWebView(webView, AllowlistClient())
+        setupWebView(scraper, ScraperClient())
+        setupLookup()
 
         // On-screen back button — navigate within page history, do nothing at root
-        findViewById<TextView>(R.id.btnBack).setOnClickListener {
-            if (webView.canGoBack()) webView.goBack()
-        }
+        findViewById<TextView>(R.id.btnBack).setOnClickListener { goBackOrHome() }
 
+        // LOOKUP: on the web page, turn an eBay results page (for instance after a photo search) into our own
+        // page; otherwise just show our page.
         findViewById<TextView>(R.id.btnEbay).setOnClickListener {
-            imageSearchPending = false
-            load(URL_EBAY)
+            val url = webView.url ?: ""
+            if (webView.visibility == View.VISIBLE && url.contains("ebay.com/sch/")) {
+                queryField.setText("")
+                queryField.hint = "from photo"
+                startSearch(url)
+            } else {
+                showLookup()
+            }
         }
         findViewById<TextView>(R.id.btnImage).setOnClickListener {
+            showWeb()
             val currentUrl = webView.url ?: ""
             if (currentUrl.contains("ebay.com", ignoreCase = true)) {
                 // Already on eBay — inject directly, no navigation needed.
@@ -194,8 +233,8 @@ class MainActivity : AppCompatActivity() {
         // Hardware back key: mirror the on-screen button behaviour
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (webView.canGoBack()) webView.goBack()
-                // At history root: swallow the event — do NOT exit the app
+                goBackOrHome()
+                // On our own page: swallow the event, do NOT exit the app
             }
         })
 
@@ -203,7 +242,147 @@ class MainActivity : AppCompatActivity() {
             // Restore scroll position and URL after a process kill/recreate
             webView.restoreState(savedInstanceState)
         } else {
-            load(URL_EBAY)
+            showLookup()
+        }
+    }
+
+    // -- Lookup page ----------------------------------------------------------
+
+    private fun goBackOrHome() {
+        if (webView.visibility != View.VISIBLE) return
+        if (webView.canGoBack()) webView.goBack() else showLookup()
+    }
+
+    private fun showLookup() {
+        webView.visibility = View.GONE
+        lookupPane.visibility = View.VISIBLE
+    }
+
+    private fun showWeb() {
+        lookupPane.visibility = View.GONE
+        webView.visibility = View.VISIBLE
+        hideKeyboard()
+    }
+
+    private fun hideKeyboard() {
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(queryField.windowToken, 0)
+    }
+
+    private fun setupLookup() {
+        queryField.setOnEditorActionListener { _, action, event ->
+            if (action == EditorInfo.IME_ACTION_SEARCH ||
+                (event != null && event.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)) {
+                val q = queryField.text.toString().trim()
+                if (q.isNotEmpty()) {
+                    queryField.hint = "What is it?"
+                    startSearch("https://www.ebay.com/sch/i.html?_nkw=" + Uri.encode(q))
+                }
+                true
+            } else false
+        }
+        tabSold.setOnClickListener { showSold = true; render() }
+        tabActive.setOnClickListener { showSold = false; render() }
+        summary.setOnClickListener {
+            if (blockedNote != null) {
+                // eBay wants a check: show the real page so it can be done once, the cookie is shared.
+                showWeb()
+                webView.loadUrl(variant(searchBase ?: URL_EBAY, sold = true))
+            }
+        }
+        resultList.setOnItemClickListener { _, _, position, _ ->
+            val item = resultList.adapter?.getItem(position) as? Listing ?: return@setOnItemClickListener
+            showWeb()
+            webView.loadUrl(item.url)
+        }
+    }
+
+    /** Same search, sold or still listed. Keeps every other filter (photo match, category) from [base]. */
+    private fun variant(base: String, sold: Boolean): String {
+        val u = Uri.parse(base)
+        val b = u.buildUpon().clearQuery()
+        val drop = setOf("LH_Sold", "LH_Complete", "_pgn", "_ipg")
+        u.queryParameterNames.filter { it !in drop }.forEach { n ->
+            u.getQueryParameters(n).forEach { b.appendQueryParameter(n, it) }
+        }
+        if (sold) b.appendQueryParameter("LH_Sold", "1").appendQueryParameter("LH_Complete", "1")
+        b.appendQueryParameter("_ipg", "60")
+        return b.build().toString()
+    }
+
+    private fun startSearch(base: String) {
+        hideKeyboard()
+        showLookup()
+        searchBase = base
+        searchId++
+        soldPage = null
+        activePage = null
+        blockedNote = null
+        showSold = true
+        summary.text = "Looking..."
+        resultList.adapter = null
+        scraper.loadUrl(variant(base, sold = true))
+    }
+
+    private inner class ScraperClient : AllowlistClient() {
+        override fun onPageFinished(view: WebView, url: String) {
+            val id = searchId
+            // eBay fills the list in after the page loads; give it a moment, then read the cards.
+            view.postDelayed({
+                if (id != searchId) return@postDelayed
+                view.evaluateJavascript(Listings.EXTRACT_JS) { raw -> onExtracted(id, Listings.parse(raw)) }
+            }, 1500)
+        }
+    }
+
+    private fun onExtracted(id: Int, page: Listings.Page?) {
+        if (id != searchId || activePage != null) return
+        val soldStep = soldPage == null
+        // Counts and class names only, never titles or prices, so nothing personal reaches the log.
+        android.util.Log.i("LookupScrape", "step=" + (if (soldStep) "sold" else "active") + " cards=" + page?.cards +
+            " items=" + page?.items?.size + " sample='" + page?.sample + "' title='" + page?.pageTitle + "'")
+        val result = page ?: Listings.Page(0, "", "", emptyList())
+        if (result.items.isEmpty() && result.cards == 0) {
+            val t = result.pageTitle.lowercase()
+            blockedNote = if (t.contains("verify") || t.contains("security") || t.contains("robot") || t.contains("challenge") || t.contains("sorry"))
+                "eBay wants a check. Tap here, do it once, then search again." else null
+        }
+        if (soldStep) {
+            soldPage = result
+            scraper.loadUrl(variant(searchBase ?: return, sold = false))
+        } else {
+            activePage = result
+            render()
+        }
+    }
+
+    private fun light() = android.graphics.Typeface.create("sans-serif-light", android.graphics.Typeface.NORMAL)
+
+    private fun render() {
+        tabSold.setTextColor(if (showSold) 0xFFFFFFFF.toInt() else 0xFF777777.toInt())
+        tabActive.setTextColor(if (showSold) 0xFF777777.toInt() else 0xFFFFFFFF.toInt())
+        val sold = soldPage ?: return
+        val active = activePage
+        val medSold = Listings.median(sold.items.mapNotNull { it.price })
+        val medActive = Listings.median(active?.items?.mapNotNull { it.price } ?: emptyList())
+        summary.text = blockedNote
+            ?: if (sold.items.isEmpty() && (active?.items?.isEmpty() != false)) "Nothing found."
+            else "Sold " + sold.items.size + ", typically " + Listings.money(medSold) + "\nListed " + (active?.items?.size ?: 0) + ", typically " + Listings.money(medActive)
+        val items = if (showSold) sold.items else (active?.items ?: emptyList())
+        resultList.adapter = object : ArrayAdapter<Listing>(this, 0, items) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val row = (convertView as? android.widget.LinearLayout) ?: android.widget.LinearLayout(context).apply {
+                    orientation = android.widget.LinearLayout.VERTICAL
+                    setPadding(48, 24, 48, 24)
+                    addView(TextView(context).apply { textSize = 20f; setTextColor(0xFFFFFFFF.toInt()); typeface = light() })
+                    addView(TextView(context).apply { textSize = 15f; setTextColor(0xFFBBBBBB.toInt()); maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END; typeface = light() })
+                    addView(TextView(context).apply { textSize = 13f; setTextColor(0xFF777777.toInt()); maxLines = 1; typeface = light() })
+                }
+                val item = getItem(position)!!
+                (row.getChildAt(0) as TextView).text = item.priceText
+                (row.getChildAt(1) as TextView).text = item.title
+                (row.getChildAt(2) as TextView).apply { text = item.note; visibility = if (item.note.isBlank()) View.GONE else View.VISIBLE }
+                return row
+            }
         }
     }
 
@@ -213,8 +392,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun setupWebView() {
-        with(webView.settings) {
+    private fun setupWebView(view: WebView, client: WebViewClient) {
+        with(view.settings) {
             // JavaScript is required by all three sites
             javaScriptEnabled   = true
             // DOM storage (localStorage/sessionStorage) — required by eBay and Discogs
@@ -249,12 +428,12 @@ class MainActivity : AppCompatActivity() {
                 .replace(Regex("""Chrome/\d+(\.\d+){3}"""), "Chrome/$SPOOFED_CHROME_MAJOR.0.0.0")
         }
 
-        webView.setBackgroundColor(Color.BLACK)  // no white flash before page paints
-        webView.webViewClient   = AllowlistClient()
-        webView.webChromeClient = MinimalChromeClient()
+        view.setBackgroundColor(Color.BLACK)  // no white flash before page paints
+        view.webViewClient   = client
+        view.webChromeClient = MinimalChromeClient()
 
-        // Discard every download attempt — we never open a file manager or external app
-        webView.setDownloadListener { _, _, _, _, _ -> }
+        // Discard every download attempt, we never open a file manager or external app
+        view.setDownloadListener { _, _, _, _, _ -> }
     }
 
     private fun load(url: String) = webView.loadUrl(url)
@@ -289,7 +468,7 @@ class MainActivity : AppCompatActivity() {
 
     // ── WebViewClient ─────────────────────────────────────────────────────────
 
-    private inner class AllowlistClient : WebViewClient() {
+    private open inner class AllowlistClient : WebViewClient() {
 
         /**
          * Intercepts every top-level navigation: link taps, JS location changes,
@@ -307,7 +486,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         override fun onPageFinished(view: WebView, url: String) {
-            if (imageSearchPending && isEbaySearchPage(url)) {
+            if (view === webView && imageSearchPending && isEbaySearchPage(url)) {
                 imageSearchPending = false
                 view.postDelayed({ view.evaluateJavascript(EBAY_CAMERA_JS, null) }, 800)
             }
