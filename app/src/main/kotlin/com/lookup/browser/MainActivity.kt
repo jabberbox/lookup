@@ -48,6 +48,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var resultList: ListView
     private var resultsTitle = "Lookup"
 
+    // One listing's pictures. The item page is read in the hidden scraper; only its picture addresses are used.
+    private lateinit var detailPane: View
+    private lateinit var detailImage: android.widget.ImageView
+    private lateinit var detailPrice: TextView
+    private lateinit var detailTitle: TextView
+    private var detailId = 0
+    private var detailImages: List<String> = emptyList()
+    private var detailIndex = 0
+    private var detailItem: Listing? = null
+    private val imageThread = java.util.concurrent.Executors.newSingleThreadExecutor()
+
     // Photo search: true from the IMAGE tap until we leave the eBay page; the results page is turned into our own
     // page by itself once a photo has been handed to eBay.
     private var imageFlow = false
@@ -207,6 +218,10 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webView)
         scraper = findViewById(R.id.scraper)
         homePane = findViewById(R.id.homePane)
+        detailPane = findViewById(R.id.detailPane)
+        detailImage = findViewById(R.id.detailImage)
+        detailPrice = findViewById(R.id.detailPrice)
+        detailTitle = findViewById(R.id.detailTitle)
         resultsPane = findViewById(R.id.resultsPane)
         bottomBar = findViewById(R.id.bottomBar)
         titleView = findViewById(R.id.title)
@@ -220,7 +235,7 @@ class MainActivity : AppCompatActivity() {
         setupWebView(webView, AllowlistClient())
         setupWebView(scraper, ScraperClient())
         setupLookup()
-        listOf(titleView, queryField, summary, labelLeft, labelRight).forEach { it.typeface = akkurat() }
+        listOf(titleView, queryField, summary, labelLeft, labelRight, detailPrice, detailTitle).forEach { it.typeface = akkurat() }
 
         findViewById<View>(R.id.btnBack).setOnClickListener { goBack() }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -232,7 +247,7 @@ class MainActivity : AppCompatActivity() {
 
     // -- Screens ----------------------------------------------------------------
 
-    private enum class Mode { HOME, RESULTS, WEB }
+    private enum class Mode { HOME, RESULTS, DETAIL, WEB }
 
     private var mode = Mode.HOME
 
@@ -246,6 +261,7 @@ class MainActivity : AppCompatActivity() {
         mode = m
         homePane.visibility = if (m == Mode.HOME) View.VISIBLE else View.GONE
         resultsPane.visibility = if (m == Mode.RESULTS) View.VISIBLE else View.GONE
+        detailPane.visibility = if (m == Mode.DETAIL) View.VISIBLE else View.GONE
         webView.visibility = if (m == Mode.WEB) View.VISIBLE else View.GONE
         bottomBar.visibility = if (m == Mode.WEB) View.GONE else View.VISIBLE
         val home = m == Mode.HOME
@@ -253,9 +269,19 @@ class MainActivity : AppCompatActivity() {
         btnRight.visibility = if (home) View.VISIBLE else View.GONE
         labelLeft.visibility = if (home) View.GONE else View.VISIBLE
         labelRight.visibility = if (home) View.GONE else View.VISIBLE
+        if (m == Mode.DETAIL) {
+            labelLeft.text = "PREV"
+            labelRight.text = "NEXT"
+            labelLeft.setTextColor(0xFFFFFFFF.toInt())
+            labelRight.setTextColor(0xFFFFFFFF.toInt())
+        } else if (m == Mode.RESULTS) {
+            labelLeft.text = "SOLD"
+            labelRight.text = "LISTED"
+        }
         titleView.text = when (m) {
             Mode.HOME -> "Lookup"
             Mode.RESULTS -> resultsTitle
+            Mode.DETAIL -> if (detailImages.size > 1) "" + (detailIndex + 1) + " of " + detailImages.size else "Listing"
             Mode.WEB -> "eBay"
         }
         if (m != Mode.HOME) hideKeyboard()
@@ -266,6 +292,10 @@ class MainActivity : AppCompatActivity() {
         when (mode) {
             Mode.HOME -> finish()
             Mode.RESULTS -> setMode(Mode.HOME)
+            Mode.DETAIL -> {
+                detailId++
+                setMode(Mode.RESULTS)
+            }
             Mode.WEB -> {
                 if (webView.canGoBack() && !imageFlow) webView.goBack()
                 else {
@@ -313,8 +343,21 @@ class MainActivity : AppCompatActivity() {
         }
         btnLeft.setOnClickListener { startImageSearch() }
         btnRight.setOnClickListener { submitQuery() }
-        labelLeft.setOnClickListener { showSold = true; paintTabs(); render() }
-        labelRight.setOnClickListener { showSold = false; paintTabs(); render() }
+        labelLeft.setOnClickListener {
+            if (mode == Mode.DETAIL) step(-1) else { showSold = true; paintTabs(); render() }
+        }
+        labelRight.setOnClickListener {
+            if (mode == Mode.DETAIL) step(1) else { showSold = false; paintTabs(); render() }
+        }
+        val swipe = android.view.GestureDetector(this, object : android.view.GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: android.view.MotionEvent) = true
+            override fun onFling(e1: android.view.MotionEvent?, e2: android.view.MotionEvent, vx: Float, vy: Float): Boolean {
+                if (Math.abs(vx) > Math.abs(vy)) { step(if (vx < 0) 1 else -1); return true }
+                return false
+            }
+            override fun onSingleTapUp(e: android.view.MotionEvent): Boolean { step(1); return true }
+        })
+        detailImage.setOnTouchListener { _, ev -> swipe.onTouchEvent(ev) }
         summary.setOnClickListener {
             if (blockedNote != null) {
                 // eBay wants a check: show the real page so it can be done once, the cookie is shared.
@@ -326,8 +369,7 @@ class MainActivity : AppCompatActivity() {
         resultList.setOnItemClickListener { _, _, position, _ ->
             val item = resultList.adapter?.getItem(position) as? Listing ?: return@setOnItemClickListener
             imageFlow = false
-            setMode(Mode.WEB)
-            webView.loadUrl(item.url)
+            openDetail(item)
         }
     }
 
@@ -362,8 +404,81 @@ class MainActivity : AppCompatActivity() {
         scraper.loadUrl(variant(base, sold = true))
     }
 
+    // -- One listing ------------------------------------------------------------
+
+    private fun openDetail(item: Listing) {
+        detailItem = item
+        detailImages = emptyList()
+        detailIndex = 0
+        detailId++
+        detailImage.setImageDrawable(null)
+        detailPrice.text = item.priceText
+        detailTitle.text = item.title
+        setMode(Mode.DETAIL)
+        scraper.loadUrl(item.url)
+    }
+
+    private fun step(by: Int) {
+        if (mode != Mode.DETAIL || detailImages.size < 2) return
+        detailIndex = (detailIndex + by + detailImages.size) % detailImages.size
+        showImage()
+    }
+
+    private fun showImage() {
+        titleView.text = if (detailImages.size > 1) "" + (detailIndex + 1) + " of " + detailImages.size else "Listing"
+        val url = detailImages.getOrNull(detailIndex) ?: return
+        val id = detailId
+        imageThread.execute {
+            val bmp = runCatching { fetchBitmap(url) }.getOrNull()
+            runOnUiThread {
+                if (id == detailId && detailImages.getOrNull(detailIndex) == url) {
+                    if (bmp != null) detailImage.setImageBitmap(bmp) else detailTitle.text = (detailItem?.title ?: "") + "\n(picture did not load)"
+                }
+            }
+        }
+    }
+
+    private fun fetchBitmap(url: String): android.graphics.Bitmap? {
+        val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+            connectTimeout = 10000; readTimeout = 15000
+        }
+        val bytes = conn.inputStream.use { it.readBytes() }
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= 1080) sample *= 2
+        return android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size,
+            android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+    }
+
+    private fun onDetailExtracted(id: Int, raw: String?) {
+        if (id != detailId || mode != Mode.DETAIL) return
+        val o = runCatching {
+            org.json.JSONObject(org.json.JSONTokener(raw ?: return).nextValue() as String)
+        }.getOrNull() ?: return
+        val arr = o.optJSONArray("images") ?: org.json.JSONArray()
+        // Counts only in the log.
+        android.util.Log.i("LookupScrape", "detail images=" + arr.length() + " href=" + (o.optString("href").contains("/itm/")))
+        if (!o.optString("href").contains("/itm/")) return  // still the old page; wait for the item page
+        if (detailImages.isNotEmpty()) return
+        val list = ArrayList<String>()
+        for (i in 0 until arr.length()) list.add(arr.getString(i))
+        if (list.isEmpty()) { detailTitle.text = (detailItem?.title ?: "") + "\n(no pictures found)"; return }
+        detailImages = list
+        detailIndex = 0
+        showImage()
+    }
+
     private inner class ScraperClient : AllowlistClient() {
         override fun onPageFinished(view: WebView, url: String) {
+            if (mode == Mode.DETAIL) {
+                val did = detailId
+                // The gallery fills in after load; try twice, the first read may come too early.
+                for (delay in longArrayOf(1500, 3500)) view.postDelayed({
+                    if (did == detailId) view.evaluateJavascript(Listings.IMAGES_JS) { raw -> onDetailExtracted(did, raw) }
+                }, delay)
+                return
+            }
             val id = searchId
             // eBay fills the list in after the page loads; give it a moment, then read the cards.
             view.postDelayed({

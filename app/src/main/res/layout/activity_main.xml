@@ -98,6 +98,47 @@
                 android:scrollbars="none" />
         </LinearLayout>
 
+        <!-- One listing: its pictures, price and title. -->
+        <LinearLayout
+            android:id="@+id/detailPane"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/detailImage"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:focusable="false"
+                android:paddingLeft="31dp"
+                android:paddingRight="31dp"
+                android:scaleType="fitCenter" />
+
+            <TextView
+                android:id="@+id/detailPrice"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingLeft="31dp"
+                android:paddingRight="31dp"
+                android:paddingTop="12dp"
+                android:textColor="#FFFFFF"
+                android:textSize="24sp" />
+
+            <TextView
+                android:id="@+id/detailTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="3"
+                android:paddingBottom="4dp"
+                android:paddingLeft="31dp"
+                android:paddingRight="31dp"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp" />
+        </LinearLayout>
+
         <WebView
             android:id="@+id/webView"
             android:layout_width="match_parent"

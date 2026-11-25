@@ -35,6 +35,28 @@ object Listings {
 })()
 """.trimIndent()
 
+    /** Runs on an item page: the gallery's pictures, largest size, each once. */
+    val IMAGES_JS = """
+(function() {
+    var seen = {}, urls = [];
+    function add(u) {
+        if (!u) return;
+        u = String(u).split(' ')[0];
+        if (u.indexOf('ebayimg.com') < 0) return;
+        var m = u.match(/\/images\/g\/([^\/]+)\//);
+        var id = m ? m[1] : u;
+        if (seen[id]) return;
+        seen[id] = 1;
+        urls.push(u.replace(/s-l\d+/, 's-l1200'));
+    }
+    document.querySelectorAll('.ux-image-carousel-item img, .ux-image-filmstrip-carousel-item img, [class*=image-carousel] img').forEach(function(i) {
+        add(i.getAttribute('data-zoom-src') || i.getAttribute('data-src') || i.getAttribute('src'));
+    });
+    if (!urls.length) { var og = document.querySelector('meta[property="og:image"]'); if (og) add(og.content); }
+    return JSON.stringify({href: location.href, images: urls});
+})()
+""".trimIndent()
+
     class Page(val cards: Int, val pageTitle: String, val sample: String, val items: List<Listing>, val href: String = "")
 
     /** evaluateJavascript hands back a JSON-quoted string; unwrap it and parse the inner JSON. */
