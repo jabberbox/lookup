@@ -53,7 +53,18 @@ object Listings {
         add(i.getAttribute('data-zoom-src') || i.getAttribute('data-src') || i.getAttribute('src'));
     });
     if (!urls.length) { var og = document.querySelector('meta[property="og:image"]'); if (og) add(og.content); }
-    return JSON.stringify({href: location.href, images: urls});
+    // Condition: the item summary row is "Condition:" followed by the value (and sometimes a "Read more" link).
+    var cond = '';
+    var box = document.querySelector('.x-item-condition');
+    if (box) {
+        var val1 = box.querySelector('.x-item-condition-text .ux-textspans');
+        if (val1) cond = val1.textContent.trim();
+        var label = box.querySelector('.x-item-condition-label');
+        if (!cond) cond = box.textContent.replace(label ? label.textContent : 'Condition:', '');
+        cond = cond.replace(/(Read more|See all condition|about the condition).*/i, '');
+        cond = cond.replace(/\s+/g, ' ').trim();
+    }
+    return JSON.stringify({href: location.href, images: urls, condition: cond});
 })()
 """.trimIndent()
 

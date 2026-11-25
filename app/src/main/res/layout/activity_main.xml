@@ -137,6 +137,19 @@
                 android:paddingRight="31dp"
                 android:textColor="#FFFFFF"
                 android:textSize="16sp" />
+
+            <TextView
+                android:id="@+id/detailCondition"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="2"
+                android:paddingBottom="8dp"
+                android:paddingLeft="31dp"
+                android:paddingRight="31dp"
+                android:textColor="#9A9A9A"
+                android:textSize="15sp"
+                android:visibility="gone" />
         </LinearLayout>
 
         <WebView

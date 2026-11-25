@@ -53,6 +53,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var detailImage: android.widget.ImageView
     private lateinit var detailPrice: TextView
     private lateinit var detailTitle: TextView
+    private lateinit var detailCondition: TextView
     private var detailId = 0
     private var detailImages: List<String> = emptyList()
     private var detailIndex = 0
@@ -222,6 +223,7 @@ class MainActivity : AppCompatActivity() {
         detailImage = findViewById(R.id.detailImage)
         detailPrice = findViewById(R.id.detailPrice)
         detailTitle = findViewById(R.id.detailTitle)
+        detailCondition = findViewById(R.id.detailCondition)
         resultsPane = findViewById(R.id.resultsPane)
         bottomBar = findViewById(R.id.bottomBar)
         titleView = findViewById(R.id.title)
@@ -235,7 +237,7 @@ class MainActivity : AppCompatActivity() {
         setupWebView(webView, AllowlistClient())
         setupWebView(scraper, ScraperClient())
         setupLookup()
-        listOf(titleView, queryField, summary, labelLeft, labelRight, detailPrice, detailTitle).forEach { it.typeface = akkurat() }
+        listOf(titleView, queryField, summary, labelLeft, labelRight, detailPrice, detailTitle, detailCondition).forEach { it.typeface = akkurat() }
 
         findViewById<View>(R.id.btnBack).setOnClickListener { goBack() }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -414,6 +416,7 @@ class MainActivity : AppCompatActivity() {
         detailImage.setImageDrawable(null)
         detailPrice.text = item.priceText
         detailTitle.text = item.title
+        detailCondition.visibility = View.GONE
         setMode(Mode.DETAIL)
         scraper.loadUrl(item.url)
     }
@@ -460,6 +463,11 @@ class MainActivity : AppCompatActivity() {
         // Counts only in the log.
         android.util.Log.i("LookupScrape", "detail images=" + arr.length() + " href=" + (o.optString("href").contains("/itm/")))
         if (!o.optString("href").contains("/itm/")) return  // still the old page; wait for the item page
+        val condition = o.optString("condition").replace(Regex("""^Condition:?\s*"""), "").trim()
+        if (condition.isNotEmpty()) {
+            detailCondition.text = "Condition: " + condition
+            detailCondition.visibility = View.VISIBLE
+        }
         if (detailImages.isNotEmpty()) return
         val list = ArrayList<String>()
         for (i in 0 until arr.length()) list.add(arr.getString(i))
