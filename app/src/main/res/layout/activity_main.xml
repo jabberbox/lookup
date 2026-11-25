@@ -110,6 +110,30 @@
                 android:scrollbars="none" />
         </LinearLayout>
 
+        <!-- Barcode scan: the camera, nothing else. -->
+        <FrameLayout
+            android:id="@+id/scanPane"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone">
+
+            <androidx.camera.view.PreviewView
+                android:id="@+id/previewView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
+            <TextView
+                android:id="@+id/scanHint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:background="#99000000"
+                android:padding="16dp"
+                android:text="Point at a barcode"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp" />
+        </FrameLayout>
+
         <!-- One listing: its pictures, price and title. -->
         <LinearLayout
             android:id="@+id/detailPane"
@@ -213,6 +237,17 @@
             android:textColor="#FFFFFF"
             android:textSize="16sp"
             android:visibility="gone" />
+
+        <ImageView
+            android:id="@+id/btnScan"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:layout_gravity="center_horizontal"
+            android:contentDescription="Barcode"
+            android:focusable="false"
+            android:paddingLeft="24dp"
+            android:paddingRight="24dp"
+            android:src="@drawable/ic_barcode" />
 
         <ImageView
             android:id="@+id/btnRight"

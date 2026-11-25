@@ -4,6 +4,13 @@ import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Color
+import android.util.Size
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.core.content.ContextCompat
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
@@ -44,6 +51,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var summary: TextView
     private lateinit var btnLeft: View
     private lateinit var btnRight: View
+    private lateinit var btnScan: View
+    private lateinit var scanPane: View
+    private lateinit var previewView: PreviewView
+    private var cameraProvider: ProcessCameraProvider? = null
+    private var scanHandled = false
     private lateinit var labelLeft: TextView
     private lateinit var labelRight: TextView
     private lateinit var resultList: ListView
@@ -234,6 +246,9 @@ class MainActivity : AppCompatActivity() {
         summary = findViewById(R.id.summary)
         btnLeft = findViewById(R.id.btnLeft)
         btnRight = findViewById(R.id.btnRight)
+        btnScan = findViewById(R.id.btnScan)
+        scanPane = findViewById(R.id.scanPane)
+        previewView = findViewById(R.id.previewView)
         labelLeft = findViewById(R.id.labelLeft)
         labelRight = findViewById(R.id.labelRight)
         resultList = findViewById(R.id.resultList)
@@ -254,7 +269,7 @@ class MainActivity : AppCompatActivity() {
 
     // -- Screens ----------------------------------------------------------------
 
-    private enum class Mode { HOME, RESULTS, DETAIL, WEB }
+    private enum class Mode { HOME, RESULTS, DETAIL, WEB, SCAN }
 
     private var mode = Mode.HOME
 
@@ -269,11 +284,13 @@ class MainActivity : AppCompatActivity() {
         homePane.visibility = if (m == Mode.HOME) View.VISIBLE else View.GONE
         resultsPane.visibility = if (m == Mode.RESULTS) View.VISIBLE else View.GONE
         detailPane.visibility = if (m == Mode.DETAIL) View.VISIBLE else View.GONE
+        scanPane.visibility = if (m == Mode.SCAN) View.VISIBLE else View.GONE
         webView.visibility = if (m == Mode.WEB) View.VISIBLE else View.GONE
-        bottomBar.visibility = if (m == Mode.WEB) View.GONE else View.VISIBLE
+        bottomBar.visibility = if (m == Mode.WEB || m == Mode.SCAN) View.GONE else View.VISIBLE
         val home = m == Mode.HOME
         btnLeft.visibility = if (home) View.VISIBLE else View.GONE
         btnRight.visibility = if (home) View.VISIBLE else View.GONE
+        btnScan.visibility = if (home) View.VISIBLE else View.GONE
         labelLeft.visibility = if (home) View.GONE else View.VISIBLE
         labelRight.visibility = if (home) View.GONE else View.VISIBLE
         if (m == Mode.DETAIL) {
@@ -290,8 +307,10 @@ class MainActivity : AppCompatActivity() {
             Mode.RESULTS -> resultsTitle
             Mode.DETAIL -> if (detailImages.size > 1) "" + (detailIndex + 1) + " of " + detailImages.size else "Listing"
             Mode.WEB -> "eBay"
+            Mode.SCAN -> "Scan barcode"
         }
         if (m == Mode.HOME) refreshHistory()
+        if (m != Mode.SCAN) stopScan()
         if (m != Mode.HOME) hideKeyboard()
         if (m == Mode.RESULTS) paintTabs()
     }
@@ -299,6 +318,7 @@ class MainActivity : AppCompatActivity() {
     private fun goBack() {
         when (mode) {
             Mode.HOME -> finish()
+            Mode.SCAN -> setMode(Mode.HOME)
             Mode.RESULTS -> {
                 // A fresh page: the earlier searches are one tap away below the field.
                 queryField.setText("")
@@ -361,16 +381,23 @@ class MainActivity : AppCompatActivity() {
         })
         historyList.setOnItemClickListener { _, _, position, _ ->
             val q = historyList.adapter?.getItem(position) as? String ?: return@setOnItemClickListener
+            if (q == CLEAR_ROW) {
+                if (clearArmed) { clearArmed = false; saveHistory(emptyList()) } else clearArmed = true
+                refreshHistory()
+                return@setOnItemClickListener
+            }
+            clearArmed = false
             queryField.setText(q)
             queryField.setSelection(q.length)
             submitQuery()
         }
         historyList.setOnItemLongClickListener { _, _, position, _ ->
             val q = historyList.adapter?.getItem(position) as? String ?: return@setOnItemLongClickListener true
-            forgetSearch(q)
+            if (q != CLEAR_ROW) forgetSearch(q)
             true
         }
         btnLeft.setOnClickListener { startImageSearch() }
+        btnScan.setOnClickListener { startScan() }
         btnRight.setOnClickListener { submitQuery() }
         labelLeft.setOnClickListener {
             if (mode == Mode.DETAIL) step(-1) else { showSold = true; paintTabs(); render() }
@@ -402,8 +429,78 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // -- Barcode scan ---------------------------------------------------------------
+    // The camera preview with CameraX; every frame's brightness plane goes through ZXing. The first code found
+    // becomes an eBay search for that number. Nothing is stored and no picture is kept.
+
+    private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) beginScan() else {
+            summary.text = ""
+            android.widget.Toast.makeText(this, "Camera permission is needed to scan", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun startScan() {
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            beginScan()
+        } else {
+            cameraPermission.launch(android.Manifest.permission.CAMERA)
+        }
+    }
+
+    private fun beginScan() {
+        scanHandled = false
+        setMode(Mode.SCAN)
+        val future = ProcessCameraProvider.getInstance(this)
+        future.addListener({
+            val provider = future.get()
+            cameraProvider = provider
+            val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+            val analysis = ImageAnalysis.Builder()
+                .setTargetResolution(Size(1280, 720))
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build()
+            analysis.setAnalyzer(ContextCompat.getMainExecutor(this).let { java.util.concurrent.Executors.newSingleThreadExecutor() }) { image ->
+                try {
+                    if (!scanHandled) {
+                        val plane = image.planes[0]
+                        val buf = plane.buffer
+                        val bytes = ByteArray(buf.remaining())
+                        buf.get(bytes)
+                        val code = Barcodes.decode(bytes, plane.rowStride, image.width, image.height)
+                        if (code != null) runOnUiThread { onBarcode(code) }
+                    }
+                } finally {
+                    image.close()
+                }
+            }
+            runCatching {
+                provider.unbindAll()
+                provider.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
+            }.onFailure {
+                android.util.Log.i("LookupScan", "camera did not start: " + it.javaClass.simpleName)
+                setMode(Mode.HOME)
+            }
+        }, ContextCompat.getMainExecutor(this))
+    }
+
+    private fun stopScan() {
+        cameraProvider?.unbindAll()
+    }
+
+    private fun onBarcode(code: String) {
+        if (scanHandled || mode != Mode.SCAN) return
+        scanHandled = true
+        stopScan()
+        resultsTitle = code
+        startSearch("https://www.ebay.com/sch/i.html?_nkw=" + Uri.encode(code))
+    }
+
     // -- Search history ----------------------------------------------------------
     // Text searches only, kept on the phone (app-private preferences), newest first. Hold a row to forget it.
+
+    private val CLEAR_ROW = "\u0000clear"
+    private var clearArmed = false
 
     private val historyPrefs by lazy { getSharedPreferences("lookup_history", MODE_PRIVATE) }
 
@@ -432,7 +529,9 @@ class MainActivity : AppCompatActivity() {
     private fun refreshHistory() {
         val typed = queryField.text.toString().trim()
         val all = loadHistory()
-        val shown = if (typed.isEmpty()) all else all.filter { it.contains(typed, ignoreCase = true) && !it.equals(typed, ignoreCase = true) }
+        val matches = if (typed.isEmpty()) all else all.filter { it.contains(typed, ignoreCase = true) && !it.equals(typed, ignoreCase = true) }
+        // With the field empty, the last row clears the whole history (asks twice).
+        val shown = if (typed.isEmpty() && matches.isNotEmpty()) matches + CLEAR_ROW else matches
         val font = akkurat()
         val vpad = (12 * resources.displayMetrics.density).toInt()
         historyList.adapter = object : ArrayAdapter<String>(this, 0, shown) {
@@ -445,7 +544,14 @@ class MainActivity : AppCompatActivity() {
                     ellipsize = android.text.TextUtils.TruncateAt.END
                     setPadding(0, vpad, 0, vpad)
                 }
-                row.text = getItem(position)
+                val text = getItem(position)
+                if (text == CLEAR_ROW) {
+                    row.text = if (clearArmed) "Tap again to clear history" else "Clear history"
+                    row.setTextColor(0xFF6E6E6E.toInt())
+                } else {
+                    row.text = text
+                    row.setTextColor(0xFFBDBDBD.toInt())
+                }
                 return row
             }
         }

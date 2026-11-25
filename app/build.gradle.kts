@@ -55,4 +55,12 @@ android {
 dependencies {
     // AppCompat brings in the Activity library (OnBackPressedCallback, LifecycleOwner)
     implementation("androidx.appcompat:appcompat:1.6.1")
+    // Barcode scan: the camera through CameraX, the code read by ZXing (pure Java, no Google services needed).
+    implementation("androidx.camera:camera-core:1.3.4")
+    implementation("androidx.camera:camera-camera2:1.3.4")
+    implementation("androidx.camera:camera-lifecycle:1.3.4")
+    implementation("androidx.camera:camera-view:1.3.4")
+    implementation("com.google.zxing:core:3.5.3")
+
+    testImplementation("junit:junit:4.13.2")
 }
